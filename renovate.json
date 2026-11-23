@@ -5,7 +5,10 @@
     {
       "matchManagers": ["dockerfile"],
       "matchDatasources": ["docker"],
-      "automerge": false
+      "matchPackageNames": ["ghcr.io/actions/actions-runner"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": false
     }
   ]
 }
