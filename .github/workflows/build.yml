@@ -1,0 +1,71 @@
+name: Build image
+
+on:
+  pull_request:
+    paths:
+      - Dockerfile
+      - .github/workflows/build.yml
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .github/workflows/build.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: build-essential-actions-runner:check
+      - name: Check installed tools and runner entrypoint
+        run: docker run --rm --entrypoint /bin/sh build-essential-actions-runner:check -ec 'command -v gcc; command -v g++; command -v pkg-config; test -x /home/runner/run.sh; test "$(id -u)" != 0'
+
+  publish:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        id: publish
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/bootjp/build-essential-actions-runner:sha-${{ github.sha }}
+      - name: Promote current main image
+        env:
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          current=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [[ "$current" != "$GITHUB_SHA" ]]; then
+            echo "main advanced during the build; leaving the immutable digest and commit tag available"
+            exit 0
+          fi
+          docker buildx imagetools create \
+            --tag ghcr.io/bootjp/build-essential-actions-runner:main \
+            "ghcr.io/bootjp/build-essential-actions-runner@$IMAGE_DIGEST"
